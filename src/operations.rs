@@ -627,6 +627,40 @@ mod tests {
     }
 
     #[test]
+    fn copy_preserves_alternating_zero_and_data_runs_across_buffers() {
+        let tmp = fixture();
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let mut payload = vec![0; 1024 * 1024 + 5003];
+        payload[4100..8201].fill(17);
+        payload[32768..65536].fill(29);
+        payload[1024 * 1024 - 2..1024 * 1024 + 3].fill(41);
+        let length = payload.len();
+        payload[length - 3..].fill(53);
+        fs::write(&source, &payload).unwrap();
+        let meta = fs::metadata(&source).unwrap();
+        let item = FileEntry {
+            path: source.clone(),
+            fingerprint: Fingerprint::from(&meta),
+            allocated: meta.blocks() * 512,
+            kind: EntryKind::File,
+        };
+        copy_then_remove(
+            &item,
+            &open_directory(tmp.path()).unwrap(),
+            c"source",
+            &open_directory(&dest).unwrap(),
+            c"moved",
+            &dest,
+            &Cancellation::default(),
+        )
+        .unwrap();
+        assert!(!source.exists());
+        assert_eq!(fs::read(dest.join("moved")).unwrap(), payload);
+    }
+
+    #[test]
     fn cancelled_copy_preserves_source_and_does_not_publish_destination() {
         let tmp = fixture();
         let source = tmp.path().join("source");
