@@ -28,7 +28,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: rsclear contributors
-Depends: libc6 (>= ${glibc_min:-2.36}), libgcc-s1, libfontconfig1, libxkbcommon0, libx11-6, libwayland-client0, pkexec, polkitd
+Depends: libc6 (>= ${glibc_min:-2.36}), libgcc-s1, libfontconfig1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, libwayland-client0, pkexec, polkitd
 Recommends: xdg-desktop-portal, fonts-noto-cjk
 Description: Local disk explorer and cache cleaner
  Native Rust desktop tool for large files, caches and Cargo build outputs.

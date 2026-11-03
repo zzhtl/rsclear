@@ -10,7 +10,7 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 env:
   CARGO_HOME: ${{ github.workspace }}/.build/cargo
   CARGO_BUILD_JOBS: 2
@@ -39,7 +39,7 @@ jobs:
     steps:
       - name: Prepare Debian build environment
         if: runner.os == 'Linux'
-        run: apt-get update && apt-get install -y ca-certificates curl git build-essential pkg-config python3 python3-gi desktop-file-utils libxkbcommon-dev libfontconfig1-dev libwayland-dev libx11-dev libdbus-1-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
+        run: apt-get update && apt-get install -y ca-certificates curl git build-essential pkg-config python3 python3-gi desktop-file-utils libxkbcommon-dev libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libfontconfig1-dev libwayland-dev libx11-dev libdbus-1-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
       - uses: actions/checkout@v4
       - name: Prepare project-local temporary directory
         run: mkdir -p .build/tmp .build/cargo

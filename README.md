@@ -32,7 +32,7 @@ Linux 便携包解压后运行 `rsclear`，保留同目录的 `rsclear-helper`�
 Ubuntu/Debian 构建依赖：
 
 ```sh
-sudo apt-get install build-essential pkg-config libxkbcommon-dev libfontconfig1-dev libwayland-dev libx11-dev libdbus-1-dev fonts-noto-cjk
+sudo apt-get install build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libfontconfig1-dev libwayland-dev libx11-dev libdbus-1-dev fonts-noto-cjk
 ```
 
 macOS 需要 Rust stable 和 Xcode Command Line Tools。随后在项目根目录执行：
