@@ -262,12 +262,7 @@ fn copy_then_remove(
             break;
         }
         hash.update(&buffer[..count]);
-        // Preserve sparse extents at buffer granularity without materialising zero blocks.
-        if buffer[..count].iter().all(|b| *b == 0) {
-            temp.as_file_mut().seek(SeekFrom::Current(count as i64))?;
-        } else {
-            temp.write_all(&buffer[..count])?;
-        }
+        write_sparse_chunk(temp.as_file_mut(), &buffer[..count])?;
         length += count as u64;
     }
     temp.as_file().set_len(length)?;
@@ -332,6 +327,33 @@ fn copy_then_remove(
         .context("副本已保存，源文件未能完全移除")?;
     File::from(source_dir.try_clone()?).sync_all()?;
     Ok(true)
+}
+
+fn write_sparse_chunk(file: &mut File, bytes: &[u8]) -> Result<()> {
+    // Coalesce equal runs: dense buffers still use one write, while a short
+    // data prefix must not materialize an otherwise empty megabyte on APFS.
+    let mut start = 0;
+    let mut zero_run = bytes[..bytes.len().min(4096)].iter().all(|b| *b == 0);
+    for offset in (4096..bytes.len()).step_by(4096) {
+        let zero = bytes[offset..(offset + 4096).min(bytes.len())]
+            .iter()
+            .all(|b| *b == 0);
+        if zero != zero_run {
+            if zero_run {
+                file.seek(SeekFrom::Current((offset - start) as i64))?;
+            } else {
+                file.write_all(&bytes[start..offset])?;
+            }
+            start = offset;
+            zero_run = zero;
+        }
+    }
+    if zero_run {
+        file.seek(SeekFrom::Current((bytes.len() - start) as i64))?;
+    } else {
+        file.write_all(&bytes[start..])?;
+    }
+    Ok(())
 }
 
 /// Deletes only beneath an already validated directory, with fd-relative traversal.
