@@ -247,6 +247,14 @@ fn copy_then_remove(
     let mut temp = tempfile::Builder::new()
         .prefix(".rsclear-move-")
         .tempfile_in(destination)?;
+    #[cfg(target_os = "macos")]
+    {
+        // Native macOS copyfile uses uncached destination I/O for sparse copies.
+        // SAFETY: the descriptor is owned and valid; F_NOCACHE takes an integer flag.
+        if unsafe { libc::fcntl(temp.as_file().as_raw_fd(), libc::F_NOCACHE, 1) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
     // Establish holes before writing: extending past EOF while copying can
     // materialize skipped zero ranges on macOS.
     temp.as_file().set_len(entry.fingerprint.size)?;
