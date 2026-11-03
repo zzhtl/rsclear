@@ -2,6 +2,8 @@
 
 验证日期：2026-11-03。环境：Ubuntu 24.04.1 x86_64，Rust/Cargo 1.99.1，8 vCPU（Xeon Gold 6230R 虚拟机）、约 16 GiB 内存，项目位于 `/dev/sda2`。未执行系统级缓存清空或修改内核页缓存；机器同时存在其他工作负载，以下为本机观测值，不是跨设备性能承诺。
 
+以下保留首次本机验收记录；之后的 GitHub CI 验证结果见末节。
+
 ## 功能与构建
 
 - `cargo test --locked --all-features`：14 个常规测试通过；2 个依赖额外环境的测试默认忽略，并已在本次单独执行通过，总计验证 16 个测试。
@@ -54,3 +56,11 @@ macOS ARM64 的应用包、签名和可选公证脚本，以及 ARM64 CI 作业�
 在项目内配置隔离的中文“桌面”目录，通过虚拟显示器连续启动 release 二进制两次：首次自动生成 `rsclear.desktop`，Exec 指向当前二进制绝对路径，权限为 `0755`；第二次启动后内容与修改时间均未变化。原始输出保留在 `.build/shortcut-smoke`。Linux 无法自动设置信任标记时显示“允许启动”提示，创建失败不会中断应用。
 
 变更后的常规检查：17 个测试通过，3 个需特定环境的测试默认忽略；其中本次新增的 GIO 集成测试已单独运行通过。Clippy、格式检查与 release 构建通过，Linux deb 和便携包同步更新。
+
+## GitHub CI 发布验证
+
+[发布前验证工作流](https://github.com/zzhtl/rsclear/actions/runs/41630314238) 已在 Debian 12 x86_64 与 macOS 14 ARM64 通过格式检查、Clippy、常规测试和打包步骤。Linux 还通过真实 X11 窗口及启动自动创建桌面快捷方式的冒烟测试；两端构建附件均已上传。
+
+CI 验证补齐了 Linux X11 必需的动态运行库。macOS 的稀疏文件改用系统 `COPYFILE_DATA_SPARSE` 拷贝实际空洞区间，保留独立内容校验；同一回归用例的源文件与落盘后的副本均保持 4 KiB 占用。新增零块/有效数据交替和跨缓冲区边界的回归用例。文件名测试按平台实际约束构造：Linux 覆盖非 UTF-8 原始字节，macOS 覆盖可创建的 Unicode 文件名。
+
+`v*` 标签须与 Cargo 包版本一致。只有两端检查、打包和校验全部成功，CI 才发布包含 deb、tar.gz、macOS app.zip、dmg 及两个 SHA-256 校验文件的 Release；下载入口见 README。macOS 使用 ad-hoc 签名，未进行 Developer ID 公证。CI 构建和文件操作测试不替代最终用户桌面的权限对话框与现场清理验收。
