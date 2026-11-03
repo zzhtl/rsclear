@@ -247,6 +247,9 @@ fn copy_then_remove(
     let mut temp = tempfile::Builder::new()
         .prefix(".rsclear-move-")
         .tempfile_in(destination)?;
+    // Establish holes before writing: extending past EOF while copying can
+    // materialize skipped zero ranges on macOS.
+    temp.as_file().set_len(entry.fingerprint.size)?;
     let mut buffer = vec![0u8; 1024 * 1024];
     let mut hash = blake3::Hasher::new();
     let mut length = 0u64;
