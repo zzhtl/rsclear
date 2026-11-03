@@ -6,12 +6,11 @@ use rsclear::{
     scan::{self, ScanRequest},
     system::{PrivilegedRequest, SystemRule},
 };
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStringExt;
 use std::{
     fs,
-    os::unix::{
-        ffi::OsStringExt,
-        fs::{MetadataExt, symlink},
-    },
+    os::unix::fs::{MetadataExt, symlink},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -63,7 +62,11 @@ fn scan_real_files_links_sparse_raw_names_and_overlapping_roots() {
     fs::hard_link(root.join("sub/data"), root.join("linked")).unwrap();
     fs::write(root.join("excluded/secret"), b"excluded").unwrap();
     symlink(&root, root.join("sub/cycle")).unwrap();
+    #[cfg(target_os = "linux")]
     let raw = root.join(std::ffi::OsString::from_vec(vec![0xff, 0xfe]));
+    // APFS rejects invalid UTF-8 names before the scanner can encounter them.
+    #[cfg(target_os = "macos")]
+    let raw = root.join("文件-扫描");
     fs::write(&raw, b"raw").unwrap();
     let sparse = root.join("sparse");
     fs::File::create(&sparse)
