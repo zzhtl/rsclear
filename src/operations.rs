@@ -267,12 +267,6 @@ fn copy_then_remove(
         }
         length += count as u64;
     }
-    // Extending with ftruncate can allocate trailing zero extents on macOS.
-    // Materialize the last zero byte instead, keeping the skipped region a hole.
-    if length > 0 && temp.as_file().metadata()?.len() < length {
-        temp.as_file_mut().seek(SeekFrom::Start(length - 1))?;
-        temp.write_all(&[0])?;
-    }
     temp.as_file().set_len(length)?;
     temp.as_file()
         .set_permissions(source.metadata()?.permissions())?;
@@ -548,6 +542,12 @@ mod tests {
             .unwrap();
         file.set_xattr("user.rsclear-test", b"metadata").unwrap();
         let meta = file.metadata().unwrap();
+        let mut probe = File::create(tmp.path().join("sparse-probe")).unwrap();
+        probe.write_all(b"content").unwrap();
+        probe.seek(SeekFrom::Start(4 * 1024 * 1024 - 1)).unwrap();
+        probe.write_all(&[0]).unwrap();
+        probe.sync_all().unwrap();
+        let probe_allocated = probe.metadata().unwrap().blocks() * 512;
         let item = FileEntry {
             path: source.clone(),
             fingerprint: Fingerprint::from(&meta),
@@ -578,7 +578,14 @@ mod tests {
             xattr::get(&target, "user.rsclear-test").unwrap(),
             Some(b"metadata".to_vec())
         );
-        assert!(metadata.blocks() * 512 < metadata.len());
+        assert!(
+            metadata.blocks() * 512 < metadata.len(),
+            "source allocated={}, copy allocated={}, seek/write probe allocated={}, logical={}",
+            meta.blocks() * 512,
+            metadata.blocks() * 512,
+            probe_allocated,
+            metadata.len()
+        );
     }
 
     #[test]
