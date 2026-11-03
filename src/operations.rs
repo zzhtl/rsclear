@@ -261,6 +261,7 @@ fn copy_then_remove(
     let mut buffer = vec![0u8; 1024 * 1024];
     let mut hash = blake3::Hasher::new();
     let mut length = 0u64;
+    let native_sparse = cfg!(target_os = "macos") && entry.allocated < entry.fingerprint.size;
     loop {
         if cancel.is_cancelled() {
             bail!("复制已取消，保留源文件");
@@ -270,11 +271,35 @@ fn copy_then_remove(
             break;
         }
         hash.update(&buffer[..count]);
-        write_sparse_chunk(temp.as_file_mut(), &buffer[..count])?;
+        if !native_sparse {
+            write_sparse_chunk(temp.as_file_mut(), &buffer[..count])?;
+        }
         length += count as u64;
     }
     if length != entry.fingerprint.size {
         bail!("源文件大小在复制期间变化，保留源文件");
+    }
+    #[cfg(target_os = "macos")]
+    if native_sparse {
+        if cancel.is_cancelled() {
+            bail!("复制已取消，保留源文件");
+        }
+        source.seek(SeekFrom::Start(0))?;
+        temp.as_file_mut().seek(SeekFrom::Start(0))?;
+        // Let macOS copy actual sparse extents; skipped writes alone do not
+        // reliably retain holes when the destination is synchronized.
+        // SAFETY: both descriptors stay owned and valid for this synchronous call.
+        if unsafe {
+            libc::fcopyfile(
+                source.as_raw_fd(),
+                temp.as_file().as_raw_fd(),
+                std::ptr::null_mut(),
+                libc::COPYFILE_DATA | libc::COPYFILE_DATA_SPARSE,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
     }
     temp.as_file()
         .set_permissions(source.metadata()?.permissions())?;
