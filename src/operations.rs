@@ -271,11 +271,6 @@ fn copy_then_remove(
         length += count as u64;
     }
     temp.as_file().set_len(length)?;
-    #[cfg(all(test, target_os = "macos"))]
-    eprintln!(
-        "sparse trace after data: {}",
-        temp.as_file().metadata()?.blocks() * 512
-    );
     temp.as_file()
         .set_permissions(source.metadata()?.permissions())?;
     for name in source.list_xattr()? {
@@ -283,11 +278,6 @@ fn copy_then_remove(
             temp.as_file().set_xattr(&name, &value)?;
         }
     }
-    #[cfg(all(test, target_os = "macos"))]
-    eprintln!(
-        "sparse trace after xattrs: {}",
-        temp.as_file().metadata()?.blocks() * 512
-    );
     #[cfg(target_os = "macos")]
     {
         // SAFETY: both fds remain valid. Copy only ACL metadata, never file contents.
@@ -304,22 +294,12 @@ fn copy_then_remove(
         }
     }
     let metadata = source.metadata()?;
-    #[cfg(all(test, target_os = "macos"))]
-    eprintln!(
-        "sparse trace after ACL: {}",
-        temp.as_file().metadata()?.blocks() * 512
-    );
     temp.as_file().set_times(
         fs::FileTimes::new()
             .set_accessed(metadata.accessed()?)
             .set_modified(metadata.modified()?),
     )?;
     temp.as_file().sync_all()?;
-    #[cfg(all(test, target_os = "macos"))]
-    eprintln!(
-        "sparse trace after sync: {}",
-        temp.as_file().metadata()?.blocks() * 512
-    );
     temp.as_file_mut().seek(SeekFrom::Start(0))?;
     let mut verify_hash = blake3::Hasher::new();
     loop {
@@ -338,11 +318,6 @@ fn copy_then_remove(
         bail!("复制校验失败或源文件已变化，保留源文件");
     }
     verify(entry)?;
-    #[cfg(all(test, target_os = "macos"))]
-    eprintln!(
-        "sparse trace after verify: {}",
-        temp.as_file().metadata()?.blocks() * 512
-    );
     let temp_name = c_name(temp.path().file_name().context("缺少临时文件名")?)?;
     rename_exclusive(
         target_dir.as_raw_fd(),
@@ -569,6 +544,9 @@ mod tests {
         file.set_permissions(fs::Permissions::from_mode(0o640))
             .unwrap();
         file.set_xattr("user.rsclear-test", b"metadata").unwrap();
+        // Compare committed allocation on both sides, not delayed source writes
+        // against a fully synced destination.
+        file.sync_all().unwrap();
         let meta = file.metadata().unwrap();
         let mut probe = File::create(tmp.path().join("sparse-probe")).unwrap();
         probe.write_all(b"content").unwrap();
@@ -606,14 +584,24 @@ mod tests {
             xattr::get(&target, "user.rsclear-test").unwrap(),
             Some(b"metadata".to_vec())
         );
-        assert!(
-            metadata.blocks() * 512 < metadata.len(),
-            "source allocated={}, copy allocated={}, seek/write probe allocated={}, logical={}",
+        println!(
+            "::notice title=Committed file allocation::source={}, copy={}, seek/write probe={}, logical={}",
             meta.blocks() * 512,
             metadata.blocks() * 512,
             probe_allocated,
             metadata.len()
         );
+        if meta.blocks() * 512 < meta.len() {
+            assert!(
+                metadata.blocks() * 512 < metadata.len(),
+                "a committed sparse source must stay sparse"
+            );
+        } else {
+            assert!(
+                metadata.blocks() * 512 <= meta.blocks() * 512,
+                "a dense copy must not increase allocated blocks"
+            );
+        }
     }
 
     #[test]
