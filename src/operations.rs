@@ -297,12 +297,21 @@ fn copy_then_remove(
         }
     }
     let metadata = source.metadata()?;
+    #[cfg(all(test, target_os = "macos"))]
+    eprintln!(
+        "before times: {}",
+        temp.as_file().metadata()?.blocks() * 512
+    );
     temp.as_file().set_times(
         fs::FileTimes::new()
             .set_accessed(metadata.accessed()?)
             .set_modified(metadata.modified()?),
     )?;
+    #[cfg(all(test, target_os = "macos"))]
+    eprintln!("after times: {}", temp.as_file().metadata()?.blocks() * 512);
     temp.as_file().sync_all()?;
+    #[cfg(all(test, target_os = "macos"))]
+    eprintln!("after sync: {}", temp.as_file().metadata()?.blocks() * 512);
     temp.as_file_mut().seek(SeekFrom::Start(0))?;
     let mut verify_hash = blake3::Hasher::new();
     loop {
