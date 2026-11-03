@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=rsclear
+Comment=Explore large files and clean rebuildable caches
+Exec=rsclear
+Icon=rsclear
+Terminal=false
+Categories=Utility;System;
+Keywords=disk;cache;rust;cleanup;

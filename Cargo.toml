@@ -1,0 +1,48 @@
+[workspace]
+members = ["."]
+resolver = "3"
+
+[package]
+name = "rsclear"
+version = "0.1.0"
+edition = "2024"
+description = "A local-first disk explorer and cache cleaner for Linux and Apple Silicon"
+license = "MIT"
+default-run = "rsclear"
+
+[features]
+default = ["gui"]
+gui = ["dep:eframe", "dep:rfd"]
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+crossbeam-channel = "0.5"
+directories = "6"
+eframe = { version = "0.37", optional = true, default-features = false, features = ["default_fonts", "system_fonts", "wgpu", "wayland", "x11", "clipboard"] }
+libc = "0.2"
+rfd = { version = "0.17", optional = true }
+rusqlite = { version = "0.38", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+trash = "5"
+xattr = "1"
+
+[[bin]]
+name = "rsclear"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "rsclear-helper"
+path = "src/bin/helper.rs"
+
+[[bin]]
+name = "rsclear-bench"
+path = "src/bin/bench.rs"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

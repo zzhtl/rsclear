@@ -1,0 +1,168 @@
+name: Build, test and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_HOME: ${{ github.workspace }}/.build/cargo
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+defaults:
+  run:
+    shell: bash
+jobs:
+  check:
+    name: Check and package (${{ matrix.platform }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            container: debian:12
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Prepare Debian build environment
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y ca-certificates curl git build-essential pkg-config python3 python3-gi desktop-file-utils libxkbcommon-dev libfontconfig1-dev libwayland-dev libx11-dev libdbus-1-dev xvfb xauth mesa-vulkan-drivers fonts-noto-cjk
+      - uses: actions/checkout@v4
+      - name: Prepare project-local temporary directory
+        run: mkdir -p .build/tmp .build/cargo
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Verify Apple Silicon runner
+        if: runner.os == 'macOS'
+        run: test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .build/cargo/registry
+            .build/cargo/git
+            .build/target
+          key: rust-${{ matrix.platform }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('src/**', 'tests/**') }}
+          restore-keys: |
+            rust-${{ matrix.platform }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-features
+      - name: Validate desktop launchers with GIO
+        if: runner.os == 'Linux'
+        run: cargo test --locked --lib generated_entry_launches_literal_special_character_path_using_gio -- --ignored
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: bash scripts/package-linux.sh
+      - name: Linux window smoke test
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p .build/smoke/config .build/smoke/Desktop .build/smoke/runtime
+          chmod 700 .build/smoke/runtime
+          printf 'XDG_DESKTOP_DIR="%s/.build/smoke/Desktop"\n' "$PWD" > .build/smoke/config/user-dirs.dirs
+          XDG_CONFIG_HOME="$PWD/.build/smoke/config" XDG_RUNTIME_DIR="$PWD/.build/smoke/runtime" RSCLEAR_DATA_DIR="$PWD/.build/smoke/app" RSCLEAR_SMOKE_EXIT=1 xvfb-run -a .build/target/release/rsclear
+          test -x .build/smoke/Desktop/rsclear.desktop
+      - name: Package Apple Silicon
+        if: runner.os == 'macOS'
+        run: bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rsclear-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rsclear-*
+          merge-multiple: true
+          path: dist
+      - name: Verify asset checksums
+        working-directory: dist
+        run: |
+          sha256sum --check SHA256SUMS-linux
+          sha256sum --check SHA256SUMS-macos
+      - name: Publish all platforms together
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const { owner, repo } = context.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+            const version = tag.slice(1);
+            const expected = [
+              `rsclear_${version}_amd64.deb`,
+              `rsclear-${version}-linux-x86_64.tar.gz`,
+              `rsclear-${version}-macos-arm64.zip`,
+              `rsclear-${version}-macos-arm64.dmg`,
+              'SHA256SUMS-linux', 'SHA256SUMS-macos',
+            ].sort();
+            const files = fs.readdirSync('dist').sort();
+            if (JSON.stringify(files) !== JSON.stringify(expected)) {
+              throw new Error(`Unexpected release files: ${files.join(', ')}`);
+            }
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (release && !release.draft) {
+              core.info(`Release already published: ${release.html_url}`);
+              return;
+            }
+            if (!release) {
+              release = (await github.rest.repos.createRelease({
+                owner, repo, tag_name: tag, target_commitish: context.sha,
+                name: `rsclear ${tag}`, draft: true,
+                body: 'Linux x86_64 与 macOS Apple Silicon 桌面版本。\n\n'
+                  + 'Linux 在 Debian 12 构建；macOS 使用 ad-hoc 签名，未进行 Developer ID 公证。\n\n'
+                  + '请下载对应平台的安装包，并使用 SHA256SUMS-linux 或 SHA256SUMS-macos 校验。',
+              })).data;
+            }
+            const existing = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id: release.id,
+            });
+            // Only an unpublished draft can have its assets replaced after a failed run.
+            for (const asset of existing) {
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+            }
+            for (const name of expected) {
+              const data = fs.readFileSync(path.join('dist', name));
+              await github.rest.repos.uploadReleaseAsset({
+                owner, repo, release_id: release.id, name, data,
+                headers: { 'content-type': 'application/octet-stream', 'content-length': data.length },
+              });
+            }
+            const published = await github.rest.repos.updateRelease({
+              owner, repo, release_id: release.id, draft: false, make_latest: 'true',
+            });
+            core.notice(`Release published: ${published.data.html_url}`);
