@@ -55,7 +55,8 @@ jobs:
         with:
           components: clippy, rustfmt
           targets: ${{ matrix.target }}
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: rust-cache
         with:
           path: |
             .build/cargo/registry
@@ -92,8 +93,22 @@ jobs:
           mkdir -p .build/smoke/config .build/smoke/Desktop .build/smoke/runtime
           chmod 700 .build/smoke/runtime
           printf 'XDG_DESKTOP_DIR="%s/.build/smoke/Desktop"\n' "$PWD" > .build/smoke/config/user-dirs.dirs
-          XDG_CONFIG_HOME="$PWD/.build/smoke/config" XDG_RUNTIME_DIR="$PWD/.build/smoke/runtime" RSCLEAR_DATA_DIR="$PWD/.build/smoke/app" RSCLEAR_SMOKE_EXIT=1 xvfb-run -a .build/target/release/rsclear
-          test -x .build/smoke/Desktop/rsclear.desktop
+          set +e
+          XDG_CONFIG_HOME="$PWD/.build/smoke/config" XDG_RUNTIME_DIR="$PWD/.build/smoke/runtime" RSCLEAR_DATA_DIR="$PWD/.build/smoke/app" RSCLEAR_SMOKE_EXIT=1 xvfb-run -a .build/target/release/rsclear 2>&1 | tee .build/smoke/window.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          text = Path('.build/smoke/window.log').read_text(errors='replace')[-16000:]
+          print('::error title=Linux window failure::' + text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+          PY
+            exit "$status"
+          fi
+          if [ ! -x .build/smoke/Desktop/rsclear.desktop ]; then
+            echo '::error::Startup did not create the desktop shortcut'
+            exit 1
+          fi
       - name: Package Apple Silicon
         if: runner.os == 'macOS'
         run: bash scripts/package-macos.sh
@@ -102,6 +117,15 @@ jobs:
           name: rsclear-${{ matrix.os }}
           path: dist/*
           if-no-files-found: error
+      - name: Save Rust build cache
+        if: always() && steps.rust-cache.outcome == 'success' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .build/cargo/registry
+            .build/cargo/git
+            .build/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
 
   release:
     name: Publish GitHub Release
